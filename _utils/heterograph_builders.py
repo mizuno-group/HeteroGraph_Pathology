@@ -6,6 +6,77 @@ heterograph builders
 
 @author: I.Azuma
 """
+# %%
+import json
+import numpy as np
+import pandas as pd
+import scipy.io as sio
+
+from PIL import Image
+
+import dgl
+
+import sys
+sys.path.append('/workspace/home/azuma/github/HeteroGraph_Pathology')
+from _utils import graph_builders,cell_feature_extractor,heterograph_builders,visualizers
+
+# %%------------------------------------------------------
+# for cell-tissue heterogeneous graph
+def cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Test/Images/test_10.png',
+                     mat_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/mat/test_10.mat',
+                     json_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/json/test_10.json'):
+    # 0. image
+    image = np.array(Image.open(image_path))
+    # 1. instance map
+    inst_map = sio.loadmat(mat_path)['inst_map']
+    # 2. node feature
+    cfe = cell_feature_extractor.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
+    cfe.load_data()
+    node_feature = cfe.conduct()
+    node_feature = node_feature[1::] # avoid background
+    # 3. centroids
+    with open(json_path) as json_file:
+        info = json.load(json_file)
+    info = info['nuc']
+    centroids = np.empty((len(info), 2))
+    for i,k in enumerate(info):
+        cent = info[k]['centroid']
+        centroids[i,0] = int(round(cent[0]))
+        centroids[i,1] = int(round(cent[1]))
+    # cell type label
+    type_list = []
+    for i,k in enumerate(info):
+        type_list.append(info[k]['type'])
+
+    dat = graph_builders.CentroidsKNNGraphBuilder(k=5, thresh=50, add_loc_feats=False)
+    cell_graph = dat.process(instance_map=inst_map,features=node_feature,centroids=centroids)
+
+    return cell_graph, type_list
+
+def tissue_cell_heterograph(superpixel, cell_graph):
+    # assign cells to tissue
+    tissue_labels = []
+    for centroids in cell_graph.ndata['centroid'].tolist():
+        x = int(centroids[0])
+        y = int(centroids[1])
+        l = superpixel[x][y]
+        tissue_labels.append(l)
+    # cell-cell interaction
+    s = cell_graph.edges()[0].tolist()
+    d = cell_graph.edges()[1].tolist()
+
+    graph_data = {}
+    graph_data[('tissue','tissue2cell','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
+    graph_data[('cell','cell2tissue','tissue')] = ([i for i in range(cell_graph.num_nodes())], tissue_labels)
+    graph_data[('cell','cci','cell')] = (s+d, d+s)
+    graph = dgl.heterograph(graph_data)
+    edges = ['tissue2cell','cell2tissue','cci']
+
+    return graph, edges
+
+
+# %%------------------------------------------------------
+# for heterogeneous cell types graph
 def cell_type_uv(whole_graph,cell_type:int=1,num_types:int=5,type_list:list=[],target_labels=[1,2,3,4,5],relabel=True):
     """ Generate the components of heterogeneous cell type graph.
     Args:
@@ -66,6 +137,19 @@ def cell_type_uv(whole_graph,cell_type:int=1,num_types:int=5,type_list:list=[],t
             vv_list[j] = update_vv
 
     return uu_list, vv_list
+
+def build_celltype_hetero(whole_graph,num_types=5,type_list=[]):
+    graph_data = {}
+    for i in range(1,num_types+1):
+        uu_list, vv_list = cell_type_uv(whole_graph=whole_graph,cell_type=i,num_types=5,type_list=type_list,relabel=True)
+        for k,uu in enumerate(uu_list):
+            if i-1 ==k:
+                graph_data[('cell_{}'.format(i-1),'inner','cell_{}'.format(k))] = (uu_list[i-1],vv_list[k])
+            else:
+                graph_data[('cell_{}'.format(i-1),'outer','cell_{}'.format(k))] = (uu_list[k],vv_list[k])
+        
+    graph = dgl.heterograph(graph_data)
+    return graph
 
 def cell_type_uv_legacy(whole_graph=None,cell_type:int=1,type_list:list=[]):
     # cell type selection
