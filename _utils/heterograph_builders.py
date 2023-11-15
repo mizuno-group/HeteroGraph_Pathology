@@ -43,11 +43,15 @@ def cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasour
         cent = info[k]['centroid']
         centroids[i,0] = int(round(cent[0]))
         centroids[i,1] = int(round(cent[1]))
+    # cell type label
+    type_list = []
+    for i,k in enumerate(info):
+        type_list.append(info[k]['type'])
 
     dat = graph_builders.CentroidsKNNGraphBuilder(k=5, thresh=50, add_loc_feats=False)
     cell_graph = dat.process(instance_map=inst_map,features=node_feature,centroids=centroids)
 
-    return cell_graph
+    return cell_graph, type_list
 
 def tissue_cell_heterograph(superpixel, cell_graph):
     # assign cells to tissue
@@ -62,11 +66,13 @@ def tissue_cell_heterograph(superpixel, cell_graph):
     d = cell_graph.edges()[1].tolist()
 
     graph_data = {}
-    graph_data[('tissue','inter','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
-    graph_data[('cell','intra','cell')] = (s+d, d+s)
+    graph_data[('tissue','tissue2cell','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
+    graph_data[('cell','cell2tissue','tissue')] = ([i for i in range(cell_graph.num_nodes())], tissue_labels)
+    graph_data[('cell','cci','cell')] = (s+d, d+s)
     graph = dgl.heterograph(graph_data)
+    edges = ['tissue2cell','cell2tissue','cci']
 
-    return graph
+    return graph, edges
 
 
 # %%------------------------------------------------------
