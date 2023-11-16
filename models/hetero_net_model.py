@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.decomposition import TruncatedSVD
 
 # %%
 class HeteroNet(nn.Module):
@@ -22,6 +23,7 @@ class HeteroNet(nn.Module):
         self.args = args
         self.edges = edges
         self.nrc = args.no_readout_concatenate
+        self.inemb = args.initial_embedding
 
         hid_feats = args.hidden_size
         out_feats = args.output_size
@@ -46,7 +48,7 @@ class HeteroNet(nn.Module):
             dglnn.HeteroGraphConv(
                 dict(
                     zip(self.edges, [
-                        dglnn.SAGEConv(in_feats=hid_feats, out_feats=hid_feats, 
+                        dglnn.SAGEConv(in_feats=hid_feats, out_feats=hid_feats, # FIXME
                         aggregator_type=args.agg_function, norm=None) for i in range(len(self.edges))
                     ])), aggregate='stack'))
         for i in range(args.conv_layers - 1):
@@ -172,11 +174,25 @@ class HeteroNet(nn.Module):
                 hcell = F.dropout(hcell, p=args.model_dropout, training=self.training)
 
         return hfeat, hcell
+    
+    def process_initial_feature(self, graph):
+        args = self.args
+
+        cell_feature = graph.srcdata['feat']['cell']
+        tissue_feature = graph.srcdata['feat']['tissue']
+
+        hfeat = cell_feature
+        hcell = tissue_feature
+
+        return hfeat, hcell
 
     def propagate(self, graph):
         args = self.args
-        hfeat, hcell = self.calculate_initial_embedding(graph)
-
+        if self.inemb:
+            hfeat, hcell = self.calculate_initial_embedding(graph)
+        else:
+            hfeat, hcell = self.process_initial_feature(graph)
+            
         h = {'cell': hfeat, 'tissue': hcell}
         hist = [h]
 

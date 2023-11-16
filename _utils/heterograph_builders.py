@@ -11,10 +11,12 @@ import json
 import numpy as np
 import pandas as pd
 import scipy.io as sio
+from sklearn.decomposition import TruncatedSVD
 
 from PIL import Image
 
 import dgl
+import torch
 
 import sys
 sys.path.append('/workspace/home/azuma/github/HeteroGraph_Pathology')
@@ -53,7 +55,7 @@ def cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasour
 
     return cell_graph, type_list
 
-def tissue_cell_heterograph(superpixel, cell_graph):
+def tissue_cell_heterograph(superpixel, cell_graph, tissue_feature, cell_feature, feature_dim=32, **kwargs):
     # assign cells to tissue
     tissue_labels = []
     for centroids in cell_graph.ndata['centroid'].tolist():
@@ -65,6 +67,16 @@ def tissue_cell_heterograph(superpixel, cell_graph):
     s = cell_graph.edges()[0].tolist()
     d = cell_graph.edges()[1].tolist()
 
+    unique_idx = [k-1 for k in sorted(list(set(tissue_labels)))]
+    target_feature = tissue_feature[[unique_idx]]
+    tissue_labels = relabel(tissue_labels) # Relabel on the serial number.
+
+    # feature dim compression
+    svd = TruncatedSVD(n_components=kwargs['hidden_size'], random_state=1) # cell feature
+    cell_feature = svd.fit_transform(cell_feature)
+    svd = TruncatedSVD(n_components=kwargs['hidden_size'], random_state=1) # tissue feature
+    target_feature = svd.fit_transform(target_feature)
+
     graph_data = {}
     graph_data[('tissue','tissue2cell','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
     graph_data[('cell','cell2tissue','tissue')] = ([i for i in range(cell_graph.num_nodes())], tissue_labels)
@@ -72,8 +84,30 @@ def tissue_cell_heterograph(superpixel, cell_graph):
     graph = dgl.heterograph(graph_data)
     edges = ['tissue2cell','cell2tissue','cci']
 
+    # add info to the graph
+    graph.nodes['tissue'].data['id'] = torch.ones(graph.num_nodes('tissue')).long()
+    graph.nodes['cell'].data['id'] = torch.arange(graph.num_nodes('cell')).long()
+    graph.nodes['tissue'].data['feat'] = torch.tensor(target_feature)
+    graph.nodes['cell'].data['feat'] = torch.tensor(cell_feature)
+    graph.edges['cell2tissue'].data['weight'] = torch.ones(graph['cell2tissue'].num_edges())
+    graph.edges['tissue2cell'].data['weight'] = torch.ones(graph['tissue2cell'].num_edges())
+    graph.edges['cci'].data['weight'] = torch.ones(graph['cci'].num_edges())
+
     return graph, edges
 
+def relabel(label_list=[3,10,21,5]):
+    """_summary_
+
+    Args:
+        label_list (list, optional): _description_. Defaults to [3,10,21,5].
+
+    Returns:
+        list: [0,2,3,1]
+    """
+    unique_s = sorted(list(set(label_list)))
+    relabel_dic = dict(zip(unique_s,[i for i in range(len(unique_s))]))
+    relabel_l = [relabel_dic.get(k) for k in label_list]
+    return relabel_l
 
 # %%------------------------------------------------------
 # for heterogeneous cell types graph
