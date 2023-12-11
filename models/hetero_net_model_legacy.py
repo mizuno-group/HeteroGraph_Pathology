@@ -29,7 +29,7 @@ class HeteroNet(nn.Module):
         out_feats = args.output_size
         FEATURE_SIZE = args.cell_size
 
-        self.embed_tissue = nn.Embedding(2, hid_feats)
+        self.embed_cell = nn.Embedding(2, hid_feats)
         self.embed_feat = nn.Embedding(FEATURE_SIZE, hid_feats)
 
         self.input_linears = nn.ModuleList()
@@ -95,14 +95,14 @@ class HeteroNet(nn.Module):
         # feats: result from two conv(cell conv and pathway conv), stacked together; dimension: (batch, 2, hidden)
         args = self.args
         if h.shape[1] == 1:
-            # when no hetero reletionships (e.g. edges = ['tissue2cell', 'cell2tissue'])
+            # when no hetero reletionships (e.g. edges = ['feature2cell', 'cell2feature'])
             return self.conv_norm[layer * len(self.edges) + 1](h.squeeze(1))
         elif args.pathway_aggregation == 'sum':
             return h[:, 0, :] + h[:, 1, :]
         else:
-            # 1. tissue to cell
+            # 1. cell to feature
             h1 = h[:, 0, :]
-            # 2. various types of cell to cell
+            # 2. various types of feature to feature
             for pi in range(1,h.shape[1]):
                 if pi == 1:
                     h2 = h[:, pi, :]
@@ -155,9 +155,17 @@ class HeteroNet(nn.Module):
         input1 = F.leaky_relu(self.embed_feat(graph.srcdata['id']['cell']))
         input2 = F.leaky_relu(self.embed_cell(graph.srcdata['id']['tissue']))
 
-        hcell = input1
-        htissue = input2
+        hfeat = input1
+        hcell = input2
         for i in range(args.embedding_layers - 1, (args.embedding_layers - 1) * 2):
+            hfeat = self.input_linears[i](hfeat)
+            hfeat = self.input_acts[i](hfeat)
+            if args.normalization != 'none':
+                hfeat = self.input_norm[i](hfeat)
+            if args.model_dropout > 0:
+                hfeat = F.dropout(hfeat, p=args.model_dropout, training=self.training)
+
+        for i in range(args.embedding_layers - 1):
             hcell = self.input_linears[i](hcell)
             hcell = self.input_acts[i](hcell)
             if args.normalization != 'none':
@@ -165,15 +173,7 @@ class HeteroNet(nn.Module):
             if args.model_dropout > 0:
                 hcell = F.dropout(hcell, p=args.model_dropout, training=self.training)
 
-        for i in range(args.embedding_layers - 1):
-            htissue = self.input_linears[i](htissue)
-            htissue = self.input_acts[i](htissue)
-            if args.normalization != 'none':
-                htissue = self.input_norm[i](htissue)
-            if args.model_dropout > 0:
-                htissue = F.dropout(htissue, p=args.model_dropout, training=self.training)
-
-        return hcell, htissue
+        return hfeat, hcell
     
     def process_initial_feature(self, graph):
         args = self.args
@@ -181,19 +181,19 @@ class HeteroNet(nn.Module):
         cell_feature = graph.srcdata['feat']['cell']
         tissue_feature = graph.srcdata['feat']['tissue']
 
-        hcell = cell_feature
-        htissue = tissue_feature
+        hfeat = cell_feature
+        hcell = tissue_feature
 
-        return hcell, htissue
+        return hfeat, hcell
 
     def propagate(self, graph):
         args = self.args
         if self.inemb:
-            hcell, htissue = self.calculate_initial_embedding(graph)
+            hfeat, hcell = self.calculate_initial_embedding(graph)
         else:
-            hcell, htissue = self.process_initial_feature(graph)
+            hfeat, hcell = self.process_initial_feature(graph)
             
-        h = {'cell': hcell, 'tissue': htissue}
+        h = {'cell': hfeat, 'tissue': hcell}
         hist = [h]
 
         for i in range(args.conv_layers):

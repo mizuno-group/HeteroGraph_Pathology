@@ -3,6 +3,9 @@
 Created on 2023-11-14 (Tue) 19:39:18
 
 Heterogeneous Graph Neural Network Model for tissue-cell interactinos in pathology.
+- Tissue-Tissue Graph
+- Cell-Cell Graph
+- Tissue-Cell Graph
 
 @author: I.Azuma
 """
@@ -91,6 +94,7 @@ class HeteroNet(nn.Module):
             self.aph = nn.Parameter(torch.zeros(2))
 
     def attention_agg(self, layer, h0, h):
+        # FIXME: not using h0
         # h: h^{l-1}, dimension: (batch, hidden)
         # feats: result from two conv(cell conv and pathway conv), stacked together; dimension: (batch, 2, hidden)
         args = self.args
@@ -100,9 +104,10 @@ class HeteroNet(nn.Module):
         elif args.pathway_aggregation == 'sum':
             return h[:, 0, :] + h[:, 1, :]
         else:
-            # 1. tissue to cell
+            # FIXME: Depends on the edges order.
+            # 1. inter relationship (e.g. tissue to cell)
             h1 = h[:, 0, :]
-            # 2. various types of cell to cell
+            # 2. inner relationship (e.g. various types of cell to cell)
             for pi in range(1,h.shape[1]):
                 if pi == 1:
                     h2 = h[:, pi, :]
@@ -125,26 +130,28 @@ class HeteroNet(nn.Module):
 
     def conv(self, graph, layer, h, hist):
         args = self.args
-        h0 = hist[-1]
+        h0 = hist[-1] # latest information
         h = self.conv_layers[layer](graph, h, mod_kwargs=dict(
             zip(self.edges, [{
                 'edge_weight':
                 F.dropout(graph.edges[self.edges[i]].data['weight'], p=args.edge_dropout, training=self.training)
             } for i in range(len(self.edges))])))
-
+            
         if args.model_dropout > 0:
             h = {
                 'cell':
                 F.dropout(self.conv_acts[layer * 2](self.attention_agg(layer, h0['cell'], h['cell'])),
                           p=args.model_dropout, training=self.training),
                 'tissue':
-                F.dropout(self.conv_acts[layer * 2 + 1](self.conv_norm[layer * len(self.edges)](h['tissue'].squeeze(1))),
+                F.dropout(self.conv_acts[layer * 2 + 1](self.attention_agg(layer, h0['tissue'], h['tissue'])),
                           p=args.model_dropout, training=self.training)
+                #F.dropout(self.conv_acts[layer * 2 + 1](self.conv_norm[layer * len(self.edges)](h['tissue'].squeeze(1))),p=args.model_dropout, training=self.training)
             }
         else:
             h = {
                 'cell': self.conv_acts[layer * 2](self.attention_agg(layer, h0['cell'], h['cell'])),
-                'tissue': self.conv_acts[layer * 2 + 1](self.conv_norm[layer * len(self.edges)](h['tissue'].squeeze(1)))
+                'tissue': self.conv_acts[layer * 2 + 1](self.attention_agg(layer, h0['tissue'], h['tissue']))
+                #'tissue': self.conv_acts[layer * 2 + 1](self.conv_norm[layer * len(self.edges)](h['tissue'].squeeze(1)))
             }
 
         return h
