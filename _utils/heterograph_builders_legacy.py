@@ -10,9 +10,7 @@ heterograph builders
 import json
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import scipy.io as sio
-from scipy import stats
 from sklearn.decomposition import TruncatedSVD
 
 from PIL import Image
@@ -24,104 +22,8 @@ import sys
 sys.path.append('/workspace/home/azuma/github/HeteroGraph_Pathology')
 from _utils import graph_builders,cell_feature_extractor,heterograph_builders,visualizers
 
-# %% tissue-cell heterogeneous graph
-
-def purified_cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Train/Images/train_6.png',
-                              mat_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/train/mat/train_6.mat',
-                              json_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/train/json/train_6.json',
-                              true_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Train/Labels/train_6.mat',
-                              neighbor_k=5,thresh=50,ignore_labels=[0]):
-    """
-    
-    """
-    # 0. image
-    image = np.array(Image.open(image_path))
-    # 1. instance map
-    mat_info = sio.loadmat(mat_path)
-    inst_map = mat_info['inst_map']
-    # 2. load json file
-    with open(json_path) as json_file:
-        info = json.load(json_file)
-    info = info['nuc']
-
-    # 3. node feature
-    cfe = cell_feature_extractor.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
-    cfe.load_data()
-    node_feature = cfe.conduct()
-    node_feature = node_feature[1::] # avoid background
-
-    # true map
-    true_map =  sio.loadmat(true_path)['type_map']
-
-    # run
-    error_counter = 0
-    ignore_counter = 0
-    remove_cell_idx = []
-    new_instances = []
-    centroids = []
-    update_label = 0
-    type_list = []
-    true_list = []
-    update_info = []
-    for inst_l in tqdm(range(1,inst_map.max()+1)):
-        cent = info[str(inst_l)]['centroid']
-        x = int(round(cent[0]))
-        y = int(round(cent[1]))
-
-        tmp_inst = np.where(inst_map==inst_l)
-        inst_labels = inst_map[tmp_inst[0],tmp_inst[1]]
-        inst_freq = int(stats.mode(inst_labels, axis=None).mode)
-        if inst_freq == 0:
-            error_counter += 1
-            remove_cell_idx.append(inst_l)
-            new_instances.append(0)
-        else:
-            true_labels = true_map[tmp_inst[0],tmp_inst[1]]
-            true_labels = [t for t in true_labels if t != 0] # remove background
-            if len(true_labels) == 0:
-                ignore_counter += 1
-                remove_cell_idx.append(inst_l)
-                new_instances.append(0)
-            else:
-                true_freq = int(stats.mode(true_labels, axis=None).mode) # remove background
-                if true_freq in ignore_labels:
-                    ignore_counter += 1
-                    remove_cell_idx.append(inst_l)
-                    new_instances.append(0)
-                else:
-                    centroids.append([int(round(cent[0])),int(round(cent[1]))])
-                    update_label += 1
-                    new_instances.append(update_label)
-                    type_list.append(info[str(inst_l)]['type'])
-                    true_list.append(true_freq)
-                    update_info.append(info[str(inst_l)])
-
-    convert_dict = dict(zip([i for i in range(len(new_instances))],new_instances))
-    updated_info = dict(zip([str(i) for i in new_instances], update_info))
-
-    # update instance map (time consuming)
-    inst_df = pd.DataFrame(inst_map)
-    fxn = lambda x : convert_dict.get(x)
-    update_inst = inst_df.applymap(fxn)
-    update_inst_map = np.array(update_inst)
-    del inst_df,update_inst
-
-    # update node feature
-    update_node_feature = np.delete(node_feature, [r-1 for r in remove_cell_idx], 0)
-
-    dat = graph_builders.CentroidsKNNGraphBuilder(k=neighbor_k, thresh=thresh, add_loc_feats=False)
-    cell_graph = dat.process(instance_map=update_inst_map,features=update_node_feature,centroids=centroids)
-
-    """
-    import sys
-    sys.path.append('/workspace/home/azuma/github/histocartography')
-    from histocartography.visualization import OverlayGraphVisualization
-    visualizer = OverlayGraphVisualization()
-    canvas = visualizer.process(image, cell_graph, instance_map=update_inst_map)
-
-    """
-    return cell_graph, update_inst_map, centroids, type_list, true_list, updated_info
-
+# %%------------------------------------------------------
+# for cell-tissue heterogeneous graph
 def cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Test/Images/test_10.png',
                      mat_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/mat/test_10.mat',
                      json_path = '/workspace/mnt/data1/Azuma/Pathology/results/HoverNet_on_ConSeP/pannuke_new_feature/json/test_10.json',neighbor_k=5,thresh=50):
@@ -153,31 +55,7 @@ def cg_from_hovernet(image_path = '/workspace/mnt/data1/Azuma/Pathology/datasour
 
     return cell_graph, type_list
 
-def instance_true_assignment(inst_map,true_map,info,ignore_labels=[0]):
-
-    centroids = []
-    type_list = []
-    true_list = []
-    for inst_l in tqdm(range(1,inst_map.max()+1)):
-        cent = info[str(inst_l)]['centroid']
-        x = int(round(cent[0]))
-        y = int(round(cent[1]))
-
-        tmp_inst = np.where(inst_map==inst_l)
-        inst_labels = inst_map[tmp_inst[0],tmp_inst[1]]
-        inst_freq = int(stats.mode(inst_labels, axis=None).mode)
-
-        true_labels = true_map[tmp_inst[0],tmp_inst[1]]
-        true_freq = int(stats.mode(true_labels, axis=None).mode) # remove background
-
-        centroids.append([int(round(cent[0])),int(round(cent[1]))])
-        type_list.append(info[str(inst_l)]['type'])
-        true_list.append(true_freq)
-
-    return type_list, true_list
-
-# %%
-def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_list,tissue_feature_list,superpixel_list,true_label_list,feature_dim=32,image_type = [0,0,0,1]):
+def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_list,tissue_feature_list,superpixel_list,true_label_list,feature_dim=32):
     """_summary_
 
     Args:
@@ -235,26 +113,12 @@ def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_l
     final_cci_d = []
     final_estimated_type = [] # estimated type list
     final_true_type = []
-    train_update_info = []
-    for idx in range(len(image_type)):
+    for idx in range(4): # FIXME len()
         # load cell graph and estimated type list
-        # graphs for train and valid
-        if image_type[idx] == 0:
-            cell_graph, update_inst_map, centroids, type_list, true_list, update_info = purified_cg_from_hovernet(image_path=image_path_list[idx],mat_path=mat_path_list[idx],json_path=json_path_list[idx],true_path=true_label_list[idx],neighbor_k=5,thresh=50,ignore_labels=[0])
-            train_update_info.append(update_info)
-        # graphs for test
-        else:
-            cell_graph, type_list = cg_from_hovernet(image_path=image_path_list[idx],mat_path=mat_path_list[idx],json_path=json_path_list[idx])
+        cell_graph, type_list = cg_from_hovernet(image_path=image_path_list[idx],mat_path=mat_path_list[idx],json_path=json_path_list[idx])
 
-            # load instance and true map
-            inst_map = sio.loadmat(mat_path_list[idx])['inst_map']
-            true_map = sio.loadmat(true_label_list[idx])['type_map']
-            with open(json_path_list[idx]) as json_file:
-                info = json.load(json_file)
-            info = info['nuc']
-            type_list, true_list = instance_true_assignment(inst_map,true_map,info,ignore_labels=[0])
-        
-        final_true_type.extend(true_list)
+        # instance map
+        inst_map = sio.loadmat(mat_path_list[idx])['inst_map']
 
         # obtain initial cell and tissue feature
         cell_feature = cell_graph.ndata['feat']
@@ -262,16 +126,25 @@ def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_l
         superpixel = pd.read_pickle(superpixel_list[idx])
         final_estimated_type.extend(type_list)
 
+        # load true label
+        true_map = sio.loadmat(true_label_list[idx])['type_map']
+
         tissue_labels = []
+        true_type = []
+        error_counter = 0
         for centroids in cell_graph.ndata['centroid'].tolist():
             x = int(centroids[0])
             y = int(centroids[1])
             l = superpixel[y][x]
+            if inst_map[y][x] == 0:
+                error_counter += 1
             tissue_labels.append(l)
+            true_type.append(int(true_map[y][x]))
+        final_true_type.extend(true_type)
 
         unique_idx = [k-1 for k in sorted(list(set(tissue_labels)))]
         target_feature = tissue_feature[[unique_idx]]
-        tissue_labels = heterograph_builders.relabel(tissue_labels) # relabel
+        tissue_labels = relabel(tissue_labels) # relabel on the serial number.
 
         # cell labels of cell-cell graph
         s = cell_graph.edges()[0].tolist()
@@ -304,8 +177,8 @@ def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_l
             merge_tissue_feature = torch.concat([merge_tissue_feature,target_feature])
             merge_cell_feature = torch.concat([merge_cell_feature,cell_feature])
         
-        print('Cell Size: ',len(cell_graph.ndata['centroid']))
-        print('True Label: ', set(true_list))
+        print('cell size: ',len(cell_graph.ndata['centroid']))
+        print(f'{error_counter} cells showed inappropriate instance')
 
     # tissue-tissue interaction
     cor_adj = pd.DataFrame(merge_tissue_feature).T.corr()
@@ -341,7 +214,80 @@ def multiimage_tissue_cell_heterograph(image_path_list,mat_path_list,json_path_l
     graph.edges['cci'].data['weight'] = torch.ones(graph['cci'].num_edges())
     graph.edges['tti'].data['weight'] = torch.ones(graph['tti'].num_edges()) # torch.cat((adj_t[ts,td],adj_t[ts,td]))
 
-    return graph, edges, final_estimated_type, relabel(final_true_type), train_update_info
+    print("Original type classes",set(final_true_type))
+
+    return graph, edges, final_estimated_type, relabel(final_true_type)
+
+def tissue_cell_heterograph(superpixel, cell_graph, tissue_feature, cell_feature, feature_dim=32, bilayer=False, **kwargs):
+    # assign cells to tissue
+    tissue_labels = []
+    for centroids in cell_graph.ndata['centroid'].tolist():
+        x = int(centroids[0])
+        y = int(centroids[1])
+        l = superpixel[x][y]
+        tissue_labels.append(l)
+    # cell-cell interaction
+    s = cell_graph.edges()[0].tolist()
+    d = cell_graph.edges()[1].tolist()
+
+    unique_idx = [k-1 for k in sorted(list(set(tissue_labels)))]
+    target_feature = tissue_feature[[unique_idx]]
+    tissue_labels = relabel(tissue_labels) # Relabel on the serial number.
+
+    # feature dim compression
+    svd = TruncatedSVD(n_components=feature_dim, random_state=1) # cell feature
+    cell_feature = svd.fit_transform(cell_feature)
+    svd = TruncatedSVD(n_components=feature_dim, random_state=1) # tissue feature
+    target_feature = svd.fit_transform(target_feature)
+
+    # tissue-tissue, tissue-cell, cell-cell
+    if bilayer:
+        # prepare tissue graph
+        cor_adj = pd.DataFrame(target_feature).T.corr()
+        threshold = 0.5
+        fxn = lambda x : x if (threshold < x)&(x<1) else 0
+        cor_adj = cor_adj.applymap(fxn) # update
+        adj_t = torch.tensor(np.array(cor_adj))
+        edge_index = adj_t.nonzero().t().contiguous()
+        ts = edge_index[0].tolist()
+        td = edge_index[1].tolist()
+
+        graph_data = {}
+        graph_data[('tissue','tissue2cell','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
+        graph_data[('cell','cell2tissue','tissue')] = ([i for i in range(cell_graph.num_nodes())], tissue_labels)
+        graph_data[('cell','cci','cell')] = (s+d, d+s)
+        graph_data[('tissue','tti','tissue')] = (ts+td, td+ts)
+        graph = dgl.heterograph(graph_data)
+        edges = ['tissue2cell','cell2tissue','cci','tti']
+
+        # add info to the graph
+        graph.nodes['tissue'].data['id'] = torch.ones(graph.num_nodes('tissue')).long()
+        graph.nodes['cell'].data['id'] = torch.arange(graph.num_nodes('cell')).long()
+        graph.nodes['tissue'].data['feat'] = torch.tensor(target_feature)
+        graph.nodes['cell'].data['feat'] = torch.tensor(cell_feature)
+        graph.edges['cell2tissue'].data['weight'] = torch.ones(graph['cell2tissue'].num_edges())
+        graph.edges['tissue2cell'].data['weight'] = torch.ones(graph['tissue2cell'].num_edges())
+        graph.edges['cci'].data['weight'] = torch.ones(graph['cci'].num_edges())
+        graph.edges['tti'].data['weight'] = torch.ones(graph['tti'].num_edges()) # torch.cat((adj_t[ts,td],adj_t[ts,td]))
+    # tissue-cell, cell-cell
+    else:
+        graph_data = {}
+        graph_data[('tissue','tissue2cell','cell')] = (tissue_labels, [i for i in range(cell_graph.num_nodes())])
+        graph_data[('cell','cell2tissue','tissue')] = ([i for i in range(cell_graph.num_nodes())], tissue_labels)
+        graph_data[('cell','cci','cell')] = (s+d, d+s)
+        graph = dgl.heterograph(graph_data)
+        edges = ['tissue2cell','cell2tissue','cci']
+
+        # add info to the graph
+        graph.nodes['tissue'].data['id'] = torch.ones(graph.num_nodes('tissue')).long()
+        graph.nodes['cell'].data['id'] = torch.arange(graph.num_nodes('cell')).long()
+        graph.nodes['tissue'].data['feat'] = torch.tensor(target_feature)
+        graph.nodes['cell'].data['feat'] = torch.tensor(cell_feature)
+        graph.edges['cell2tissue'].data['weight'] = torch.ones(graph['cell2tissue'].num_edges())
+        graph.edges['tissue2cell'].data['weight'] = torch.ones(graph['tissue2cell'].num_edges())
+        graph.edges['cci'].data['weight'] = torch.ones(graph['cci'].num_edges())
+
+    return graph, edges
 
 def relabel(label_list=[3,10,21,5]):
     """_summary_
@@ -356,4 +302,112 @@ def relabel(label_list=[3,10,21,5]):
     relabel_dic = dict(zip(unique_s,[i for i in range(len(unique_s))]))
     relabel_l = [relabel_dic.get(k) for k in label_list]
     return relabel_l
+
+# %%------------------------------------------------------
+# for heterogeneous cell types graph
+def cell_type_uv(whole_graph,cell_type:int=1,num_types:int=5,type_list:list=[],target_labels=[1,2,3,4,5],relabel=True):
+    """ Generate the components of heterogeneous cell type graph.
+    Args:
+        whole_graph (_type_): dgl.heterograph.DGLGraph. Original homogeneous graph. Returned from KNN graph builders.
+        cell_type (int, optional): _description_. Defaults to 1.
+        num_types (int, optional): _description_. Defaults to 5.
+        type_list (list, optional): A list containing cell types. The index corresponds to the cell ID. Defaults to []. Generate like this:
+            type_list = []
+            for i,k in enumerate(data):
+                type_list.append(data[k]['type']).
+        target_labels (list, optional): _description_. Defaults to [1,2,3,4,5].
+        relabel (bool, optional): _description_. Defaults to True.
+
+    Returns:
+        _type_: _description_
+    """
+    whole_edges = whole_graph.edges()
+    whole_sources = whole_edges[0].tolist()
+    whole_destinations = whole_edges[1].tolist()
+    id2type = dict(zip([i for i in range(len(type_list))], type_list))
+
+    reid_dict_list = []
+    for tmp in range(1,num_types+1):
+        cell_selection = sorted([i for i, x in enumerate(type_list) if x == tmp])
+        id2reid = dict(zip(cell_selection, [i for i in range(len(cell_selection))]))
+        reid_dict_list.append(id2reid)
+
+    cell_selection = [i for i, x in enumerate(type_list) if x == cell_type]
+    uu_list = [[] for _ in range(num_types)]
+    vv_list = [[] for _ in range(num_types)]
+    for s_id in (cell_selection):
+        indexes = [i for i, x in enumerate(whole_sources) if x == s_id]
+        d_ids = [whole_destinations[idx] for idx in indexes]
+        s_type = id2type.get(s_id)
+        for d_id in d_ids:
+            d_type = id2type.get(d_id)
+            if d_type in target_labels:
+                vv_list[d_type-1].append(d_id)
+                uu_list[d_type-1].append(s_id)
+            else:
+                pass
+    # inner (bidirected)
+    i_uu = uu_list[cell_type-1]+vv_list[cell_type-1]
+    i_vv = vv_list[cell_type-1]+uu_list[cell_type-1]
+    uu_list[cell_type-1] = i_uu
+    vv_list[cell_type-1] = i_vv
+
+    # relabel
+    if relabel:
+        for j in range(len(uu_list)):
+            update_uu = [reid_dict_list[cell_type-1].get(k) for k in uu_list[j]]
+            uu_list[j] = update_uu
+        
+        for j in range(len(vv_list)):
+            update_vv = [reid_dict_list[j].get(k) for k in vv_list[j]]
+            if None in update_vv:
+                print(cell_type,j)
+            vv_list[j] = update_vv
+
+    return uu_list, vv_list
+
+def build_celltype_hetero(whole_graph,num_types=5,type_list=[]):
+    graph_data = {}
+    for i in range(1,num_types+1):
+        uu_list, vv_list = cell_type_uv(whole_graph=whole_graph,cell_type=i,num_types=5,type_list=type_list,relabel=True)
+        for k,uu in enumerate(uu_list):
+            if i-1 ==k:
+                graph_data[('cell_{}'.format(i-1),'inner','cell_{}'.format(k))] = (uu_list[i-1],vv_list[k])
+            else:
+                graph_data[('cell_{}'.format(i-1),'outer','cell_{}'.format(k))] = (uu_list[k],vv_list[k])
+        
+    graph = dgl.heterograph(graph_data)
+    return graph
+
+def cell_type_uv_legacy(whole_graph=None,cell_type:int=1,type_list:list=[]):
+    # cell type selection
+    indexes = [i for i, x in enumerate(type_list) if x == cell_type]
+    inner_uu = []
+    inner_vv = []
+    outer_uu = []
+    outer_vv = []
+    for idx in indexes:
+        source_idxs = [i for i, x in enumerate(whole_graph.edges()[0].tolist()) if x == idx]
+        destinations = [whole_graph.edges()[1].tolist()[s] for s in source_idxs]
+        inner_dest = sorted(list(set(destinations) & set(indexes)))
+        outer_dest = sorted(list(set(destinations) - set(indexes)))
+        # inner (bidirected)
+        i_uu = [idx]*len(inner_dest) + inner_dest
+        i_vv = inner_dest + [idx]*len(inner_dest)
+        """
+        e.g. idx=895
+        i_uu = [895, 895, 895, 873, 877, 885]
+        i_vv = [873, 877, 885, 895, 895, 895]
+        """
+        # outer (directed)
+        o_uu = [idx]*len(outer_dest)
+        o_vv = outer_dest
+
+        # update
+        inner_uu.extend(i_uu)
+        inner_vv.extend(i_vv)
+        outer_uu.extend(o_uu)
+        outer_vv.extend(o_vv)
+
+    return inner_uu,inner_vv,outer_uu,outer_vv
 
