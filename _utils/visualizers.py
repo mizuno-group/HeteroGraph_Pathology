@@ -7,10 +7,13 @@ https://github.com/vqdang/hover_net/tree/67e2ce5e3f1a64a2ece77ad1c24233653a9e090
 
 @author: I.Azuma
 """
-import numpy as np
 import cv2
-import colorsys
+import json 
 import random
+import colorsys
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
 
 def random_colors(N, bright=True):
     """Generate random colors.
@@ -58,3 +61,65 @@ def overlay_viz(image,inst_dict,type_colour=None):
         output = cv2.drawContours(overlay, final_contour, -1, inst_colour, 3)
     return output
     #cv2.imwrite('./output.png', output)
+
+def before_after(pred, s=0, e=650,
+                 image_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Train/Images/train_6.png',
+                 true_overlay_path = '/workspace/mnt/data1/Azuma/Pathology/datasource/consep/CoNSeP/Train/Overlay/train_6.png',
+                 json_path = '/train/json/train_6.json',
+                 inst_dict = None):
+    image = np.array(Image.open(image_path))
+
+    train_colour = {
+    0 : ["nolabe", [0  ,   0,   0]], 
+    1 : ["neopla", [255,   0,   0]], 
+    2 : ["inflam", [255,  11, 255]], 
+    3 : ["connec", [0  ,   0, 255]], 
+    4 : ["necros", [255, 255,   0]], 
+    5 : ["no-neo", [0  , 255,   0]] 
+    }
+
+    test_colour = {
+        0 : ["nolabe", [0  ,   0,   0]], 
+        1 : ["necros", [255, 255,   0]], 
+        2 : ["inflam", [255,  11, 255]], 
+        3 : ["no-neo", [0  , 255,   0]], 
+        4 : ["neopla", [255,   0,   0]], 
+        5 : ["connec", [0  ,   0, 255]] 
+    }
+
+    if inst_dict is None:
+        with open(json_path) as json_file:
+            inst_dict = json.load(json_file)['nuc']
+    
+    # before
+    overlay = overlay_viz(image=image,inst_dict=inst_dict,type_colour=train_colour)
+
+    # after
+    # _, pred = best_logits.max(dim=1)
+    test_pred = pred[s:e] # slice
+    counter = 0
+    for i,k in enumerate(test_pred):
+        old_label = inst_dict.get(str(i+1))['type']
+        new_label = int(test_pred[i])
+        if old_label != new_label:
+            counter += 1
+        inst_dict.get(str(i+1))['type'] = new_label
+    overlay2 = overlay_viz(image=image,inst_dict=inst_dict,type_colour=test_colour)
+    true_image = np.array(Image.open(true_overlay_path))
+
+    fig, ax = plt.subplots(figsize=(15,5))
+    ax.axis("off")
+    
+    plt1 = fig.add_subplot(1,3,1)
+    plt1.imshow(true_image)
+    plt1.set_title('True')
+
+    plt2 = fig.add_subplot(1,3,2)
+    plt2.imshow(overlay)
+    plt2.set_title('HoverNet')
+
+    plt3 = fig.add_subplot(1,3,3)
+    plt3.imshow(overlay2)
+    plt3.set_title('HoverNet + Proposed')
+
+    plt.show()
