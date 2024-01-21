@@ -84,7 +84,8 @@ def before_after(pred, s=0, e=650,
         2 : ["inflam", [255,  11, 255]], 
         3 : ["no-neo", [0  , 255,   0]], 
         4 : ["neopla", [255,   0,   0]], 
-        5 : ["connec", [0  ,   0, 255]] 
+        5 : ["connec", [0  ,   0, 255]],
+        6 : ["muscle", [255, 255, 255]]
     }
 
     if inst_dict is None:
