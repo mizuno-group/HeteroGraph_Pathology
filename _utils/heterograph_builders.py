@@ -22,7 +22,7 @@ import torch
 
 import sys
 sys.path.append('/workspace/home/azuma/github/HeteroGraph_Pathology')
-from _utils import graph_builders,cell_feature_extractor,heterograph_builders,visualizers
+from _utils import graph_builders,cell_feature_extractor_legacy,heterograph_builders,visualizers
 
 # %% tissue-cell heterogeneous graph
 
@@ -51,7 +51,8 @@ class HeteroGraphBuilders():
         info = info['nuc']
 
         # 3. node feature
-        cfe = cell_feature_extractor.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
+        # TODO: Improve to allow input of external information
+        cfe = cell_feature_extractor_legacy.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
         cfe.load_data()
         node_feature = cfe.conduct()
         node_feature = node_feature[1::] # avoid background
@@ -371,14 +372,14 @@ def instance_true_assignment(inst_map,true_map,info,ignore_labels=[0]):
         x = int(round(cent[0]))
         y = int(round(cent[1]))
 
-        tmp_inst = np.where(inst_map==inst_l)
+        tmp_inst = np.where(inst_map==inst_l) # (x_array, y_array)
         inst_labels = inst_map[tmp_inst[0],tmp_inst[1]]
         inst_freq = int(stats.mode(inst_labels, axis=None).mode)
 
         true_labels = true_map[tmp_inst[0],tmp_inst[1]]
         true_freq = int(stats.mode(true_labels, axis=None).mode) # remove background
 
-        centroids.append([int(round(cent[0])),int(round(cent[1]))])
+        centroids.append([x, y])
         type_list.append(info[str(inst_l)]['type'])
         true_list.append(true_freq)
 
