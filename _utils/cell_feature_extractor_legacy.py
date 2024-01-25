@@ -4,6 +4,9 @@ Created on 2023-07-11 (Tue) 12:13:51
 
 Cell Feature Extractor for HoverNet results.
 
+We modified HoverNet architecture and obtained final layer as cell morphological features.
+
+
 @author: I.Azuma
 """
 #%%
