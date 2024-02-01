@@ -10,11 +10,13 @@ import importlib
 import json
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 import torch
 import torchvision
 from torch import nn
 import torchvision.transforms as transforms
+from torchvision.models.feature_extraction import create_feature_extractor
 
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -142,10 +144,63 @@ class LoadModel():
                 model.features = _remove_modules(model.features, extraction_layer)
         return model
     
-    def load_model(self):
+    def load_model(self,remove_layer=True):
         model_class = self.dynamic_import_from("torchvision.models", self.architecture)
         model = model_class(pretrained=True)
         model = model.to(self.device)
-        model = self._remove_layers(model, extraction_layer=None)
+        if remove_layer:
+            model = self._remove_layers(model, extraction_layer=None)
         model.eval()
         self.model = model
+
+def _remove_modules(model: nn.Module, last_layer: str) -> nn.Module:
+    """
+    Remove all modules in the model that come after a given layer.
+
+    Args:
+        model (nn.Module): A PyTorch model.
+        last_layer (str): Last layer to keep in the model.
+
+    Returns:
+        nn.Module: Model without pruned modules.
+    """
+    modules = [n for n, _ in model.named_children()]
+    modules_to_remove = modules[modules.index(last_layer)+1:]
+    for mod in modules_to_remove:
+        setattr(model, mod, nn.Sequential())
+    return model
+
+def flex_feat_extractor(image_loader, model, target_layers=['layer1.2.relu_2','layer2.3.relu_2','layer3.5.relu_2','layer4.2.relu_2']):
+    feat_extractor = create_feature_extractor(model, target_layers)
+
+    cuda = torch.cuda.is_available()
+    device = torch.device("cuda:0" if cuda else "cpu")
+
+    features = torch.Tensor()
+    for coords, image_batch in tqdm(image_loader):
+        image_batch = image_batch.to(device)
+
+        with torch.no_grad():
+            
+            feat_dict = feat_extractor(image_batch)
+            #emb = model(image_batch).cpu().squeeze() # Simple
+            merged_emb = concat_avgpool(feat_dict)
+
+        features = torch.cat((features, merged_emb))
+    
+    for i, l in enumerate(feat_dict):
+        print('Name:{}, Size:{}'.format(target_layers[i],feat_dict.get(l).shape[1]))
+    
+    return features
+
+def concat_avgpool(feat_dict):
+    adaptiveavgpool = nn.AdaptiveAvgPool2d(output_size=(1,1))
+    merged_emb = torch.Tensor()
+    for i, layer in enumerate(feat_dict):
+        tmp_map = feat_dict.get(layer)
+        output = adaptiveavgpool(tmp_map)
+
+        emb = output.view(output.shape[0],-1).cpu()
+        merged_emb = torch.concat([merged_emb, emb],axis=1)
+    
+    return merged_emb
