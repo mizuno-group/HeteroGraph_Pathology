@@ -146,7 +146,7 @@ class HeteroGraphBuilders():
         # 1. instance map
         inst_map = sio.loadmat(mat_path)['inst_map']
         # 2. node feature
-        cfe = cell_feature_extractor.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
+        cfe = cell_feature_extractor_legacy.CellFeatureExtractor(mat_path=mat_path,json_path=json_path)
         cfe.load_data()
         node_feature = cfe.conduct()
         node_feature = node_feature[1::] # avoid background
@@ -170,7 +170,9 @@ class HeteroGraphBuilders():
         return cell_graph, type_list
 
 
-    def multiimage_tissue_cell_heterograph(self,image_path_list,mat_path_list,json_path_list,tissue_feature_list,superpixel_list,true_label_list,feature_dim=32,image_type=[0,0,0,1],tti_threshold=0.7):
+    def multiimage_tissue_cell_heterograph(self,image_path_list=[],mat_path_list=[],json_path_list=[],
+                cell_feature_list=[],tissue_feature_list=[],superpixel_list=[],true_label_list=[],
+                feat_svd=True,feature_dim=32,image_type=[0,0,0,1],tti_threshold=0.7):
         """_summary_
 
         Args:
@@ -251,7 +253,11 @@ class HeteroGraphBuilders():
             self.cell_graph_list.append(cell_graph)
 
             # obtain initial cell and tissue feature
-            cell_feature = cell_graph.ndata['feat']
+            if len(cell_feature_list) == 0:
+                cell_feature = cell_graph.ndata['feat']
+            else:
+                cell_feature = pd.read_pickle(cell_feature_list[idx])
+
             tissue_feature = pd.read_pickle(tissue_feature_list[idx])
             superpixel = pd.read_pickle(superpixel_list[idx])
             final_estimated_type.extend(type_list)
@@ -312,10 +318,11 @@ class HeteroGraphBuilders():
         td = edge_index[1].tolist()
 
         # process feature
-        svd = TruncatedSVD(n_components=feature_dim, random_state=1) # tissue feature
-        merge_tissue_feature = svd.fit_transform(merge_tissue_feature)
-        svd = TruncatedSVD(n_components=feature_dim, random_state=1) # cell feature
-        merge_cell_feature = svd.fit_transform(merge_cell_feature)
+        if feat_svd:
+            svd = TruncatedSVD(n_components=feature_dim, random_state=1) # tissue feature
+            merge_tissue_feature = svd.fit_transform(merge_tissue_feature)
+            svd = TruncatedSVD(n_components=feature_dim, random_state=1) # cell feature
+            merge_cell_feature = svd.fit_transform(merge_cell_feature)
 
         # construct graph
         graph_data = {}

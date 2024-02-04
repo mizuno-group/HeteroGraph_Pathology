@@ -65,14 +65,14 @@ class MyRegion2Patch(Dataset):
     """
     Extract patches that best reflect superpixel instance information.
     """
-    def __init__(self, image_path:str, superpixels:np.array, stepsize=10, windowsize=(144,144), mask_others=False) -> None:
+    def __init__(self, image_path:str, superpixels:np.array, ext_method="bbox", stepsize=10, windowsize=(144,144), mask_others=False) -> None:
         super().__init__()
         self.image = Image.open(image_path).convert("RGB") # Load image
         self.superpixels = superpixels
         self.stepsize=stepsize
         self.windowsize=windowsize
 
-        self.all_patches, self.upperlefts = image_utils.tissue_patch_extractor(self.image, self.superpixels, stepsize=self.stepsize, windowsize=self.windowsize, mask_others=mask_others)
+        self.all_patches, self.upperlefts = image_utils.tissue_patch_extractor(self.image, self.superpixels, ext_method, stepsize=self.stepsize, windowsize=self.windowsize, mask_others=mask_others)
         self.nr_patches = len(self.all_patches)
 
         self.dataset_transform = transforms.Compose(
