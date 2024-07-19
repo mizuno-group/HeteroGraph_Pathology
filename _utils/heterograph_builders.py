@@ -126,14 +126,6 @@ class HeteroGraphBuilders():
         if np.max(update_inst_map) != cell_graph.num_nodes():
             raise ValueError('!! Something is wrong in creating cell graph !!')
 
-        """
-        import sys
-        sys.path.append('/workspace/home/azuma/github/histocartography')
-        from histocartography.visualization import OverlayGraphVisualization
-        visualizer = OverlayGraphVisualization()
-        canvas = visualizer.process(image, cell_graph, instance_map=update_inst_map)
-
-        """
         return cell_graph, update_inst_map, centroids, type_list, true_list, updated_info
 
 
@@ -172,7 +164,7 @@ class HeteroGraphBuilders():
 
     def multiimage_tissue_cell_heterograph(self,image_path_list=[],mat_path_list=[],json_path_list=[],
                 cell_feature_list=[],tissue_feature_list=[],superpixel_list=[],true_label_list=[],
-                feat_svd=True,feature_dim=32,image_type=[0,0,0,1],tti_threshold=0.7):
+                feat_svd=True,feature_dim=32,image_type=[0,0,0,1],tti_threshold=0.7,tti_k=5):
         """_summary_
 
         Args:
@@ -286,7 +278,7 @@ class HeteroGraphBuilders():
             final_cci_d.extend(cci_d)
 
             # cell labels of tissue-cell graph
-            tc_dest = [i for i in range(cell_graph.num_nodes())] # tissue-cell destination (0,1,...,649)
+            tc_dest = [i for i in range(cell_graph.num_nodes())]  # tissue-cell destination (0,1,...,649)
             utc_dest = [tc+c_max for tc in tc_dest]
             final_cell_labels.extend(utc_dest)
             c_max = max(utc_dest)+1 # update c_max
@@ -305,14 +297,28 @@ class HeteroGraphBuilders():
                 merge_cell_feature = torch.concat([merge_cell_feature,cell_feature])
             
             print('Cell Size: ',len(cell_graph.ndata['centroid']))
+            print('Tissue Size: ',len(target_feature))
             print('True Label: ', set(true_list))
 
         # tissue-tissue interaction
+        from sklearn.neighbors import kneighbors_graph
+        # 1. kNN adjacency
+        adj_t = kneighbors_graph(
+                merge_tissue_feature,
+                tti_k,
+                mode="distance",
+                include_self=False,
+                metric="euclidean").toarray()
+        adj_t = torch.tensor(np.array(adj_t))
+        # 2. correlation based (legacy)
+        """
         cor_adj = pd.DataFrame(merge_tissue_feature).T.corr()
         threshold = tti_threshold
         fxn = lambda x : x if (threshold < x)&(x<1) else 0
         cor_adj = cor_adj.applymap(fxn) # update
         adj_t = torch.tensor(np.array(cor_adj))
+        """
+        self.adj_t = adj_t
         edge_index = adj_t.nonzero().t().contiguous()
         ts = edge_index[0].tolist()
         td = edge_index[1].tolist()
